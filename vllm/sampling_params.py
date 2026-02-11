@@ -569,6 +569,13 @@ class SamplingParams(
         # For internal use only. Backward compatibility not guaranteed
         return self._bad_words_token_ids
 
+    @property
+    def requires_token_ids(self) -> bool:
+        """Whether this sampling params requires output_token_ids for logits processing."""
+        return (
+            self.thinking_token_budget is not None
+        )
+
     def clone(self) -> "SamplingParams":
         """Deep copy, but maybe not the LogitsProcessor objects.
 
