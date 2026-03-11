@@ -472,7 +472,12 @@ class FlashInferAllToAllManager(All2AllManagerBase):
         )
 
     def ensure_alltoall_workspace_initialized(self):
-        """Ensure workspace is initialized"""
+        """Ensure workspace is initialized.
+
+        Returns False if initialization fails (e.g. container lacks
+        SYS_PTRACE capability required by MNNVL's pidfd_getfd, or
+        hardware does not support MNNVL fabric memory).
+        """
         if not has_flashinfer_all2all():
             return False
 
@@ -480,15 +485,79 @@ class FlashInferAllToAllManager(All2AllManagerBase):
             return False
 
         if not self.initialized:
-            self.initialize(
-                world_size=self.world_size,
-                rank=self.rank,
-                gpus_per_node=torch.cuda.device_count,
-            )
+            try:
+                self.initialize(
+                    world_size=self.world_size,
+                    rank=self.rank,
+                    gpus_per_node=torch.cuda.device_count(),
+                )
+            except RuntimeError as e:
+                hint = ""
+                if "pidfd_getfd" in str(e):
+                    hint = (
+                        " MNNVL requires SYS_PTRACE capability. "
+                        "If running in a container, add "
+                        "--cap-add=SYS_PTRACE to your docker run command."
+                    )
+                logger.error(
+                    "FlashInfer AllToAll workspace initialization failed "
+                    "(rank=%d): %s%s",
+                    self.rank, e, hint,
+                )
+                return False
         return self.initialized
 
     def get_handle(self, kwargs):
         return self
+
+    def dispatch(
+        self,
+        hidden_states: torch.Tensor,
+        router_logits: torch.Tensor,
+        is_sequence_parallel: bool = False,
+        extra_tensors: list[torch.Tensor] | None = None,
+    ) -> (
+        tuple[torch.Tensor, torch.Tensor]
+        | tuple[torch.Tensor, torch.Tensor, list[torch.Tensor]]
+    ):
+        """Fallback AllGather dispatch used when the naive dispatch/combine
+        path is triggered (e.g. TRITON experts without FlashInfer CUTLASS).
+        Mirrors AgRsAll2AllManager.dispatch()."""
+        dp_metadata = get_forward_context().dp_metadata
+        assert dp_metadata is not None
+        sizes = dp_metadata.get_chunk_sizes_across_dp_rank()
+        assert sizes is not None
+        dist_group = get_ep_group() if is_sequence_parallel else get_dp_group()
+        assert sizes[dist_group.rank_in_group] == hidden_states.shape[0]
+
+        tensors_to_gather = [hidden_states, router_logits]
+        if extra_tensors is not None:
+            tensors_to_gather.extend(extra_tensors)
+
+        gathered_tensors = dist_group.all_gatherv(
+            tensors_to_gather,
+            dim=0,
+            sizes=sizes,
+        )
+
+        if extra_tensors is not None:
+            return (gathered_tensors[0], gathered_tensors[1], gathered_tensors[2:])
+        return gathered_tensors[0], gathered_tensors[1]
+
+    def combine(
+        self, hidden_states: torch.Tensor, is_sequence_parallel: bool = False
+    ) -> torch.Tensor:
+        """Fallback ReduceScatter combine used when the naive dispatch/combine
+        path is triggered. Mirrors AgRsAll2AllManager.combine()."""
+        dp_metadata = get_forward_context().dp_metadata
+        assert dp_metadata is not None
+        sizes = dp_metadata.get_chunk_sizes_across_dp_rank()
+        assert sizes is not None
+
+        dist_group = get_ep_group() if is_sequence_parallel else get_dp_group()
+        result = dist_group.reduce_scatterv(hidden_states, dim=0, sizes=sizes)
+
+        return result
 
     def cleanup(self):
         """Clean up workspace"""

@@ -109,6 +109,14 @@ class FusedMoEMethodBase(QuantizeMethodBase):
     def is_monolithic(self) -> bool:
         return False
 
+    @property
+    def handles_ep_dispatch_internally(self) -> bool:
+        """True if this method's forward pass handles EP dispatch/combine
+        internally (e.g. via a prepare_finalize that does alltoallv or
+        allgather).  When True, layer.py will skip the naive dispatch/combine
+        path even for DP>1."""
+        return False
+
     # @abstractmethod
     def apply(
         self,

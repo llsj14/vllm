@@ -23,5 +23,13 @@ class CustomCommunicator(CommBackend):
         dist.all_gather_object(gathered, data, group=self._group)
         return gathered
 
+    def bcast(self, data, root: int):
+        container = [data]
+        dist.broadcast_object_list(container, src=root, group=self._group)
+        return container[0]
+
+    def barrier(self) -> None:
+        dist.barrier(group=self._group)
+
     def Split(self, color: int, key: int) -> "CustomCommunicator":
         return self

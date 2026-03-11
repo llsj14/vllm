@@ -163,11 +163,37 @@ def make_fp8_moe_alpha_scales_for_fi(
     return g1_alphas, g2_alphas
 
 
+def build_flashinfer_bf16_cutlass_moe_prepare_finalize(
+    moe: FusedMoEConfig | None,
+) -> mk.FusedMoEPrepareAndFinalize:
+    """Create a FlashInfer prepare/finalize for BF16 (unquantized) MoE.
+
+    For DP=1: MoEPrepareAndFinalizeNoEP.
+    For DP>1 with flashinfer_all2allv: AllToAllv via MNNVL (GB200) or
+    NCCL fallback (H100).  Hardware is auto-detected by
+    create_flashinfer_prepare_finalize().
+    For DP>1 with other backends: AllGather+ReduceScatter.
+    """
+    use_dp = moe.moe_parallel_config.dp_size > 1 if moe is not None else False
+    enable_alltoallv = (
+        moe.moe_parallel_config.all2all_backend == "flashinfer_all2allv"
+        if moe is not None
+        else False
+    )
+    return create_flashinfer_prepare_finalize(
+        use_dp=use_dp,
+        use_nvfp4=False,
+        enable_alltoallv=enable_alltoallv,
+    )
+
+
 def build_flashinfer_fp8_cutlass_moe_prepare_finalize(
     moe: FusedMoEConfig | None, use_deepseek_fp8_block_scale: bool = False
 ) -> mk.FusedMoEPrepareAndFinalize:
     """Create a FlashInfer CUTLASS fused-MoE prepare finalize kernel"""
     use_dp = moe.moe_parallel_config.dp_size > 1 if moe is not None else False
+    # TODO(bf16-dp): FP8도 alltoallv 지원 원하면 enable_alltoallv 추가 (fp4_moe.py 참고)
+    all2all_backend = moe.moe_parallel_config.all2all_backend if moe is not None else "N/A"
     # Propagate block-scale flag so prepare/finalize can skip act quantization
     # and inform the kernel to consume per-block weight scales.
     return create_flashinfer_prepare_finalize(

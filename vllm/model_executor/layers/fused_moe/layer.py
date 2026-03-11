@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
+import os
 from collections.abc import Callable, Iterable
 from contextlib import nullcontext
 from enum import Enum
@@ -1789,8 +1790,10 @@ class FusedMoE(CustomOp):
                 hidden_states, router_logits, has_separate_shared_experts
             )
 
-        do_naive_dispatch_combine: bool = self.dp_size > 1 and not isinstance(
-            self.quant_method, FusedMoEModularMethod
+        do_naive_dispatch_combine: bool = (
+            self.dp_size > 1
+            and not isinstance(self.quant_method, FusedMoEModularMethod)
+            and not self.quant_method.handles_ep_dispatch_internally
         )
 
         ctx = get_forward_context()

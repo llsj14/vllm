@@ -7,6 +7,8 @@ import torch
 import torch.nn.functional as F
 from torch.nn import Module
 
+import os
+
 import vllm.envs as envs
 import vllm.model_executor.layers.fused_moe.modular_kernel as mk
 from vllm._aiter_ops import rocm_aiter_ops
@@ -56,6 +58,7 @@ class UnquantizedFusedMoEMethod(FusedMoEMethodBase, CustomOp):
         self.unquantized_backend = select_unquantized_moe_backend(
             use_ep=self.moe.moe_parallel_config.use_ep,
             use_dp=self.moe.moe_parallel_config.dp_size > 1,
+            all2all_backend=self.moe.moe_parallel_config.all2all_backend,
         )
 
         # AITER only supports gated activations (silu/gelu), so disable it
@@ -69,6 +72,13 @@ class UnquantizedFusedMoEMethod(FusedMoEMethodBase, CustomOp):
     @property
     def is_monolithic(self) -> bool:
         return self._is_monolithic
+
+    @property
+    def handles_ep_dispatch_internally(self) -> bool:
+        # FlashInfer CUTLASS kernels embed dispatch/combine inside their
+        # prepare_finalize (either AllGather or AllToAllv), so layer.py must
+        # not also run the naive AllGather dispatch path.
+        return self.unquantized_backend == UnquantizedMoeBackend.FLASHINFER_CUTLASS
 
     @property
     def supports_eplb(self) -> bool:
