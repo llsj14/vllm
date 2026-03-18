@@ -467,12 +467,10 @@ class NCCLAllToAllMoEPrepareAndFinalize(FlashInferCutlassMoEPrepareAndFinalize):
         ):
             if op_name not in splitting_ops:
                 splitting_ops.append(op_name)
-                logger.info(
+                logger.debug(
                     "NCCLAllToAllMoEPrepareAndFinalize: added '%s' to "
-                    "splitting_ops so AllToAll runs outside CUDA graphs. "
-                    "splitting_ops now: %s",
+                    "splitting_ops",
                     op_name,
-                    splitting_ops,
                 )
 
     def _ep_pg(self):
