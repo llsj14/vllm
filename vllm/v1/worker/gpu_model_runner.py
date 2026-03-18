@@ -4165,6 +4165,24 @@ class GPUModelRunner(
         # for other compilation modes, cudagraph behavior is controlled by
         # CudagraphWraper and CudagraphDispatcher of vllm.
 
+        # Hard guard: NCCL AllToAll (P2P group ops) inside a FULL CUDA graph is
+        # unstable on H100 / NCCL 2.27.5 (~2048 NCCL ops in one graph per batch).
+        # Downgrade any mode that includes FULL to PIECEWISE so that AllToAll
+        # splitting ops can run as Python between CUDA graph subgraphs.
+        from vllm.model_executor.layers.fused_moe.flashinfer_cutlass_prepare_finalize import (  # noqa: E501
+            NCCLAllToAllMoEPrepareAndFinalize,
+        )
+        if NCCLAllToAllMoEPrepareAndFinalize._active:
+            mode = self.compilation_config.cudagraph_mode
+            if mode is not None and mode.has_full_cudagraphs():
+                logger.info(
+                    "NCCLAllToAllMoEPrepareAndFinalize [hard guard]: "
+                    "blocking CUDAGraphWrapper(FULL) — downgrading "
+                    "cudagraph_mode %s → PIECEWISE.",
+                    mode,
+                )
+                self.compilation_config.cudagraph_mode = CUDAGraphMode.PIECEWISE
+
         # wrap the model with full cudagraph wrapper if needed.
         cudagraph_mode = self.compilation_config.cudagraph_mode
         assert cudagraph_mode is not None

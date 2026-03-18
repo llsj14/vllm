@@ -128,6 +128,13 @@ class CUDAGraphEntry:
     # during capture, and check if they are the same during replay
     input_addresses: list[int] | None = None
 
+    # Store references to the input tensors captured during CUDA graph
+    # recording.  During replay, if a splitting-op (e.g. moe_forward)
+    # produces an output tensor at a *different* address, we copy the
+    # new data into the captured buffer so the replayed graph reads
+    # correct values.
+    input_tensors: list[torch.Tensor] | None = None
+
 
 @dataclasses.dataclass
 class CUDAGraphOptions:
@@ -244,10 +251,12 @@ class CUDAGraphWrapper:
             # validate that cudagraph capturing is legal at this point.
             validate_cudagraph_capturing_enabled()
 
-            input_addresses = [
-                x.data_ptr() for x in args if isinstance(x, torch.Tensor)
+            input_tensors = [
+                x for x in args if isinstance(x, torch.Tensor)
             ]
+            input_addresses = [x.data_ptr() for x in input_tensors]
             entry.input_addresses = input_addresses
+            entry.input_tensors = input_tensors
             cudagraph = torch.cuda.CUDAGraph()
 
             with ExitStack() as stack:
@@ -294,10 +303,23 @@ class CUDAGraphWrapper:
             # manage the memory during cuda graph capture
             return output
 
+        # Copy input data to captured buffers when addresses differ.
+        # This handles splitting ops (like moe_forward) that produce
+        # output tensors at new addresses on each invocation, while the
+        # CUDA graph expects data at the addresses from capture time.
+        if entry.input_tensors is not None:
+            for captured_t, runtime_arg in zip(
+                entry.input_tensors,
+                (x for x in args if isinstance(x, torch.Tensor)),
+            ):
+                if runtime_arg.data_ptr() != captured_t.data_ptr():
+                    captured_t.copy_(runtime_arg)
+
         if self.is_debugging_mode:
             # check if the input addresses are the same
+            # (after copy, the captured addresses should still be valid)
             new_input_addresses = [
-                x.data_ptr() for x in args if isinstance(x, torch.Tensor)
+                x.data_ptr() for x in entry.input_tensors
             ]
             assert new_input_addresses == entry.input_addresses, (
                 f"Input addresses for cudagraphs are different "

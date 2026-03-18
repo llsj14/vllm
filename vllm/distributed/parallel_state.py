@@ -273,6 +273,75 @@ direct_register_custom_op(
 )
 
 
+def ep_alltoall_dispatch(
+    recv_hidden: torch.Tensor,
+    send_hidden: torch.Tensor,
+    recv_topk_ids: torch.Tensor,
+    send_topk_ids: torch.Tensor,
+    recv_weights: torch.Tensor,
+    send_weights: torch.Tensor,
+    group_name: str,
+) -> None:
+    assert group_name in _groups, f"Group {group_name} is not found."
+    group = _groups[group_name]()
+    if group is None:
+        raise ValueError(f"Group {group_name} is destroyed.")
+    pg = group.device_group
+    torch.distributed.all_to_all_single(recv_hidden, send_hidden, group=pg)
+    torch.distributed.all_to_all_single(recv_topk_ids, send_topk_ids, group=pg)
+    torch.distributed.all_to_all_single(recv_weights, send_weights, group=pg)
+
+
+def ep_alltoall_dispatch_fake(
+    recv_hidden: torch.Tensor,
+    send_hidden: torch.Tensor,
+    recv_topk_ids: torch.Tensor,
+    send_topk_ids: torch.Tensor,
+    recv_weights: torch.Tensor,
+    send_weights: torch.Tensor,
+    group_name: str,
+) -> None:
+    pass
+
+
+direct_register_custom_op(
+    op_name="ep_alltoall_dispatch",
+    op_func=ep_alltoall_dispatch,
+    fake_impl=ep_alltoall_dispatch_fake,
+    mutates_args=["recv_hidden", "recv_topk_ids", "recv_weights"],
+)
+
+
+def ep_alltoall_combine(
+    recv_combined: torch.Tensor,
+    send_expert_out: torch.Tensor,
+    group_name: str,
+) -> None:
+    assert group_name in _groups, f"Group {group_name} is not found."
+    group = _groups[group_name]()
+    if group is None:
+        raise ValueError(f"Group {group_name} is destroyed.")
+    torch.distributed.all_to_all_single(
+        recv_combined, send_expert_out, group=group.device_group
+    )
+
+
+def ep_alltoall_combine_fake(
+    recv_combined: torch.Tensor,
+    send_expert_out: torch.Tensor,
+    group_name: str,
+) -> None:
+    pass
+
+
+direct_register_custom_op(
+    op_name="ep_alltoall_combine",
+    op_func=ep_alltoall_combine,
+    fake_impl=ep_alltoall_combine_fake,
+    mutates_args=["recv_combined"],
+)
+
+
 class GroupCoordinator:
     """
     PyTorch ProcessGroup wrapper for a group of processes.
