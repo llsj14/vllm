@@ -5060,7 +5060,17 @@ class GPUModelRunner(
 
         # Lock workspace to prevent resizing during execution.
         # Max workspace sizes should have been captured during warmup/profiling.
-        lock_workspace()
+        #
+        # Exception: when NCCLAllToAll is active, MoE runs outside CUDA graphs
+        # (splitting_op), so the expert kernel workspace is NOT captured in any
+        # graph.  total_recv from AllToAll can exceed capture-time batch sizes,
+        # requiring larger workspace.  Skipping the lock is safe because the
+        # workspace tensor is never referenced by a CUDA graph replay.
+        from vllm.model_executor.layers.fused_moe.flashinfer_cutlass_prepare_finalize import (  # noqa: E501
+            NCCLAllToAllMoEPrepareAndFinalize,
+        )
+        if not NCCLAllToAllMoEPrepareAndFinalize._active:
+            lock_workspace()
 
         end_time = time.perf_counter()
         elapsed_time = end_time - start_time
